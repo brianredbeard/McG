@@ -20,6 +20,7 @@ import ghidra.app.plugin.PluginCategoryNames;
 import ghidra.app.plugin.ProgramPlugin;
 import ghidra.framework.plugintool.*;
 import ghidra.framework.plugintool.util.PluginStatus;
+import ghidra.util.Msg;
 
 /**
  * Provide class-level documentation that describes what this plugin does.
@@ -49,14 +50,20 @@ public class GhidraMCPPlugin extends ProgramPlugin {
 		super.init();
 		startMcpServer();
 	}
+
 	private void startMcpServer() {
-		McpServerApplication.startServer(this);
+		try {
+			McpServerApplication.startServer(this);
+		} catch (Exception e) {
+			// Log error but don't crash the plugin
+			Msg.error(this, "Failed to start MCP server, but plugin will continue to load", e);
+		}
 	}
 
 
 	@Override
 	public void dispose() {
-		McpServerApplication.stopServer();
+		McpServerApplication.removePlugin(this);
 		super.dispose();
 	}
 }
