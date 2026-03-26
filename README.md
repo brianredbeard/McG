@@ -6,20 +6,63 @@ This project is a fork of [suidpit/ghidra-mcp](https://github.com/suidpit/ghidra
 
 ## Tools
 
+### Program Management
 | Tool | Description |
 |------|-------------|
 | `listOpenPrograms` | List all open programs across CodeBrowser windows, showing which is active |
 | `selectProgram` | Switch which open binary to operate on |
+| `rebaseProgram` | Change the program's image base address to align with runtime addresses |
+
+### Analysis
+| Tool | Description |
+|------|-------------|
 | `listFunctions` | List all functions in the current program |
 | `getFunctionAddressByName` | Get function entry point address |
 | `decompileFunctionByName` | Decompile a function to C pseudocode |
-| `renameFunction` | Rename a function |
-| `addCommentToFunction` | Add a comment to a function |
-| `renameLocalVariableInFunction` | Rename a local variable within a function |
-| `getReferencesToAddress` | Get cross-references to an address |
-| `getReferencesFromAddress` | Get cross-references from an address |
 | `getFunctionCallers` | Get functions that call a given function |
 | `searchForStrings` | Search for strings in program memory (min 5 chars) |
+
+### Renaming
+| Tool | Description |
+|------|-------------|
+| `renameFunction` | Rename a function |
+| `renameLocalVariableInFunction` | Rename a local variable within a function |
+| `batchRenameFunctions` | Rename multiple functions in a single transaction |
+
+### Comments
+| Tool | Description |
+|------|-------------|
+| `addCommentToFunction` | Add a comment to a function |
+| `batchSetComments` | Set comments on multiple functions in a single transaction |
+
+### Data Types
+| Tool | Description |
+|------|-------------|
+| `createStruct` | Create a new structure data type |
+| `addStructField` | Add a field to a structure |
+| `getStruct` | Get structure details including all fields |
+| `listStructs` | List all structure data types |
+| `deleteStruct` | Delete a structure data type |
+| `createEnum` | Create a new enum data type |
+| `addEnumValue` | Add a named value to an enum |
+| `getEnum` | Get enum details including all values |
+| `applyStructAtAddress` | Apply a structure type at a memory address |
+| `listTypes` | List all data types, optionally filtered by category |
+
+### Memory
+| Tool | Description |
+|------|-------------|
+| `readBytes` | Read raw bytes from memory as hex dump (max 4KB) |
+| `searchBytes` | Search for byte patterns in memory (max 100 results) |
+| `getDataAtAddress` | Get information about data defined at an address |
+| `defineData` | Create a typed data definition at an address |
+| `clearData` | Clear/undefine data in a range |
+
+### References
+| Tool | Description |
+|------|-------------|
+| `getReferencesToAddress` | Get cross-references to an address |
+| `getReferencesFromAddress` | Get cross-references from an address |
 
 Multiple CodeBrowser windows are supported. The server automatically selects the first window with an open binary, or you can use `selectProgram` to target a specific one.
 
@@ -86,6 +129,17 @@ ghidraRun
 
 Explicit overrides fail if the port is unavailable (no scanning), ensuring your client config matches.
 
+### Host Address
+
+The server binds to `127.0.0.1` (localhost only) by default for security. To allow network access (e.g., for headless mode or remote clients), set:
+
+```bash
+export GHIDRA_MCP_HOST=0.0.0.0
+ghidraRun
+```
+
+⚠️ **Security Warning:** Binding to non-localhost addresses exposes the MCP server to unauthenticated network access. Anyone on the network can invoke tools that modify your Ghidra program. Only use `0.0.0.0` in trusted network environments.
+
 ### Discovery
 
 The server writes to `~/.ghidra-mcp/` on startup:
@@ -95,7 +149,17 @@ The server writes to `~/.ghidra-mcp/` on startup:
 | `mcp.json` | MCP client config for the latest instance (symlink target) |
 | `mcp.<port>.json` | Per-instance config keyed by port (e.g., `mcp.8888.json`) |
 
-Stale config files are cleaned automatically by checking if the port is still in use.
+Config files reflect the bound host address and are updated automatically on every server start. Stale config files are cleaned by checking if the port is still in use.
+
+### Resolving DAT_* References
+
+The decompiler shows `DAT_*` references for undefined data at addresses. To resolve these to actual values:
+
+1. Use `getDataAtAddress` to inspect what's at the address
+2. Use `defineData` to create a typed data definition (e.g., `"string"`, `"dword"`)
+3. Decompile again — the reference now shows the typed value
+
+Example: `DAT_00402000` → define as `"string"` → decompiler shows `"/tmp/log.txt"`
 
 ## CI/CD
 

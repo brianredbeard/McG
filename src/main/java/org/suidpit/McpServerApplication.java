@@ -93,8 +93,6 @@ public class McpServerApplication {
         return activePort;
     }
 
-    private static final Path MCP_DIR = Paths.get(System.getProperty("user.home"), ".ghidra-mcp");
-
     /**
      * Writes MCP client config files to ~/.ghidra-mcp/
      *
