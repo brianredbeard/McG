@@ -39,40 +39,83 @@ else if (project.hasProperty("GHIDRA_INSTALL_DIR")) {
 	ghidraInstallDir = project.getProperty("GHIDRA_INSTALL_DIR")
 }
 
-task distributeExtension {
-	group "Ghidra"
+if (ghidraInstallDir != null) {
+	task distributeExtension {
+		group "Ghidra"
 
-	apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
-	dependsOn ':buildExtension'
+		apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
+		dependsOn ':buildExtension'
+	}
 }
 //----------------------END "DO NOT MODIFY" SECTION-------------------------------
 
-java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(23)
-	}
+// Apply Java plugin when Ghidra build system is not available (e.g., for tests)
+if (ghidraInstallDir == null) {
+	apply plugin: 'java'
+}
+
+// Read Java release target from Ghidra's application.properties
+// so we never hardcode a version that drifts.
+// Default to Java 21 if Ghidra installation is not available (e.g., for tests)
+def javaRelease = 21
+if (ghidraInstallDir != null) {
+	def ghidraProps = new Properties()
+	new File(ghidraInstallDir, "Ghidra/application.properties").withInputStream { ghidraProps.load(it) }
+	javaRelease = ghidraProps.getProperty('application.java.compiler', '21') as int
 }
 
 tasks.withType(JavaCompile) {
-	options.release = 23
+	options.release = javaRelease
+	options.compilerArgs.add('-parameters')
 }
 
 repositories {
 	mavenCentral()
 }
 
+// Ghidra ships its own slf4j-api with NOPLoggerFactory. Spring Boot's
+// starter-logging brings Logback, which conflicts at runtime. Exclude
+// all logging implementations globally so Ghidra's SLF4J wins.
+configurations.all {
+	exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
+	exclude group: 'ch.qos.logback'
+	exclude group: 'org.apache.logging.log4j'
+}
 
 dependencies {
 	// Any external dependencies added here will automatically be copied to the lib/ directory when
 	implementation('org.springframework.boot:spring-boot-starter:3.3.6') {
-		exclude group: 'org.apache.logging.log4j'
 		exclude group: 'org.springframework.boot', module: 'spring-boot-starter-tomcat'
 	}
 	implementation 'org.springframework.boot:spring-boot-starter-jetty:3.3.6'
 	implementation('org.springframework.ai:spring-ai-mcp-server-webflux-spring-boot-starter:+') {
-		exclude group: 'org.apache.logging.log4j'
 		exclude group: 'org.springframework.boot', module: 'spring-boot-starter-tomcat'
 	}
+
+	testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Exclude Ghidra-dependent files from compilation only when running standalone tests
+// (when GHIDRA_INSTALL_DIR is not set)
+if (ghidraInstallDir == null) {
+	sourceSets {
+		main {
+			java {
+				exclude '**/McpServerApplication.java'
+				exclude '**/GhidraMCPPlugin.java'
+				exclude '**/GhidraService.java'
+			}
+		}
+	}
+}
+
+test {
+	useJUnitPlatform()
+}
+
+clean {
+	delete 'dist'
 }
 
 // Exclude additional files from the built extension

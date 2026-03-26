@@ -47,6 +47,7 @@ Thumbs.db
 # Misc
 *.swp
 *.bak
+ghidra_docs
 
 # Cursor Settings
 .cursor/

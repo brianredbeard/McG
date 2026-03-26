@@ -1,3 +1,9 @@
+# These port values are overridden programmatically at runtime by McpServerApplication.
+# The server defaults to port 8888 but automatically selects the next available port
+# if 8888 is occupied. These values serve as the fallback default and documentation.
+# To override the port, use:
+#   - Environment variable: GHIDRA_MCP_PORT=<port>
+#   - System property: -Dghidra.mcp.port=<port>
 server:
   port: 8888
   shutdown: immediate
