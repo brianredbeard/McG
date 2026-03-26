@@ -28,6 +28,8 @@ public class McpServerApplication {
     private static final List<GhidraMCPPlugin> plugins = new CopyOnWriteArrayList<>();
     private static volatile GhidraMCPPlugin selectedPlugin;
     private static volatile int activePort = 0;
+    private static volatile String activeHost = "127.0.0.1";
+    private static final Path MCP_DIR = Paths.get(System.getProperty("user.home"), ".ghidra-mcp");
 
     public static void startServer(GhidraMCPPlugin plugin) {
         plugins.add(plugin);
@@ -36,26 +38,38 @@ public class McpServerApplication {
         }
 
         try {
-            // Clean up stale port files from dead processes
+            // Clean up stale config files
             cleanStalePortFiles();
 
-            // Resolve port configuration
+            // Resolve host and port configuration
+            String host = PortResolver.resolveHost();
             PortResolver.PortConfig portConfig = PortResolver.resolvePort();
             int port = PortResolver.findAvailablePort(portConfig.port(), portConfig.isExplicit());
+            activeHost = host;
             activePort = port;
 
-            // Start Spring Boot with the resolved port
+            // Warn if binding to non-localhost
+            if (!"127.0.0.1".equals(host) && !"localhost".equals(host)) {
+                Msg.warn(McpServerApplication.class,
+                        "Warning: MCP server is accessible from the network (" + host + "). " +
+                        "No authentication is configured.");
+            }
+
+            // Start Spring Boot with the resolved host and port
             // Command-line args have highest priority and will override application.yml
             context = SpringApplication.run(McpServerApplication.class,
+                    "--server.address=" + host,
                     "--server.port=" + port,
                     "--spring.ai.mcp.server.port=" + port);
 
-            // Write port file and register shutdown hook
-            writePortFile(port);
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> deletePortFile()));
+            // Write config files and register shutdown hook
+            writeConfigFiles(host, port);
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> deleteConfigFiles()));
 
+            // Use localhost in URLs for readability when bound to 127.0.0.1
+            String displayHost = "127.0.0.1".equals(host) ? "localhost" : host;
             Msg.info(McpServerApplication.class,
-                    "GhidraMCP server started at http://localhost:" + port + "/sse");
+                    "McG server started at http://" + displayHost + ":" + port + "/sse");
         } catch (RuntimeException e) {
             // Handle port resolution failures and TOCTOU race conditions
             if (e instanceof PortInUseException || e.getCause() instanceof BindException) {
@@ -85,21 +99,25 @@ public class McpServerApplication {
      * Writes MCP client config files to ~/.ghidra-mcp/
      *
      * Generated files:
-     *   mcp.json           - latest instance config (symlink target for projects)
-     *   mcp.<port>.json    - per-instance config keyed by port
+     *   mcp.json         - latest instance config (symlink target for projects)
+     *   mcp.<port>.json  - per-instance config keyed by port
      */
-    private static void writePortFile(int port) {
+    private static void writeConfigFiles(String host, int port) {
         try {
             Files.createDirectories(MCP_DIR);
+
+            // Use localhost for readability when bound to 127.0.0.1
+            String urlHost = "127.0.0.1".equals(host) ? "localhost" : host;
 
             String mcpConfig = "{\n" +
                     "  \"mcpServers\": {\n" +
                     "    \"McG\": {\n" +
                     "      \"type\": \"sse\",\n" +
-                    "      \"url\": \"http://localhost:" + port + "/sse\"\n" +
+                    "      \"url\": \"http://" + urlHost + ":" + port + "/sse\"\n" +
                     "    }\n" +
                     "  }\n" +
                     "}\n";
+
 
             Files.writeString(MCP_DIR.resolve("mcp." + port + ".json"), mcpConfig);
             Files.writeString(MCP_DIR.resolve("mcp.json"), mcpConfig);
@@ -154,7 +172,7 @@ public class McpServerApplication {
     /**
      * Deletes config files for the current server instance
      */
-    private static void deletePortFile() {
+    private static void deleteConfigFiles() {
         try {
             Files.deleteIfExists(MCP_DIR.resolve("mcp." + activePort + ".json"));
             // Only remove mcp.json if we're the last instance
@@ -231,10 +249,11 @@ public class McpServerApplication {
 
     public static void stopServer() {
         if (context != null) {
-            deletePortFile();
+            deleteConfigFiles();
             context.close();
             context = null;
             activePort = 0;
+            activeHost = "127.0.0.1";
         }
     }
 }

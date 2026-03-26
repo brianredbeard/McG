@@ -59,6 +59,32 @@ public class PortResolver {
     }
 
     /**
+     * Resolves the host address to bind the MCP server to.
+     * Defaults to 127.0.0.1 (localhost only). Set GHIDRA_MCP_HOST to override.
+     *
+     * @return the host address to bind to
+     */
+    public static String resolveHost() {
+        return resolveHost(System::getenv);
+    }
+
+    /**
+     * Resolves the host address with injectable environment variable lookup.
+     * Package-private for testing.
+     *
+     * @param envLookup function to look up environment variables
+     * @return the host address to bind to
+     */
+    static String resolveHost(java.util.function.Function<String, String> envLookup) {
+        String envVar = envLookup.apply("GHIDRA_MCP_HOST");
+        if (envVar != null && !envVar.isEmpty()) {
+            return envVar;
+        }
+        // Default to localhost-only binding for security
+        return "127.0.0.1";
+    }
+
+    /**
      * Checks if a port is available for binding.
      *
      * @param port the port to check

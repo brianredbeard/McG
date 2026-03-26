@@ -195,4 +195,29 @@ class PortResolutionTest {
             }
         }
     }
+
+    @Test
+    void test_resolveHost_defaultIsLocalhost() {
+        String host = PortResolver.resolveHost(testEnv::get);
+
+        assertEquals("127.0.0.1", host, "Default host should be 127.0.0.1");
+    }
+
+    @Test
+    void test_resolveHost_envVarOverrides() {
+        testEnv.put("GHIDRA_MCP_HOST", "0.0.0.0");
+
+        String host = PortResolver.resolveHost(testEnv::get);
+
+        assertEquals("0.0.0.0", host, "Host should be 0.0.0.0 from environment variable");
+    }
+
+    @Test
+    void test_resolveHost_allowsSpecificIP() {
+        testEnv.put("GHIDRA_MCP_HOST", "192.168.1.100");
+
+        String host = PortResolver.resolveHost(testEnv::get);
+
+        assertEquals("192.168.1.100", host, "Host should be the specified IP address");
+    }
 }
