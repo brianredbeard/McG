@@ -21,8 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -101,6 +99,7 @@ jobs:
         if: steps.check-version.outputs.skip == 'false'
         id: jdk-version
         run: |
+          # Read Java compiler version from Ghidra's application.properties
           JAVA_VERSION=$(grep 'application.java.compiler' "${GHIDRA_INSTALL_DIR}/Ghidra/application.properties" \
             | cut -d= -f2 2>/dev/null)
           if [ -z "$JAVA_VERSION" ]; then
@@ -135,12 +134,16 @@ jobs:
       - name: Regenerate Gradle wrapper
         if: steps.check-version.outputs.skip == 'false'
         run: |
+          # Extract the Gradle version from the properties we just copied
           GRADLE_VERSION=$(grep distributionUrl gradle/wrapper/gradle-wrapper.properties \
             | sed 's|.*gradle-\(.*\)-bin.zip|\1|')
           echo "Regenerating wrapper for Gradle ${GRADLE_VERSION}"
 
+          # Use the system gradle or download one to regenerate the wrapper JAR
+          # The wrapper JAR must match the target Gradle version
           GHIDRA_INSTALL_DIR="${GHIDRA_INSTALL_DIR}" ./gradlew wrapper \
             --gradle-version "${GRADLE_VERSION}" || {
+            # If gradlew fails (e.g., wrapper JAR missing), bootstrap with Ghidra's
             echo "Bootstrapping wrapper from Ghidra's copy..."
             if [ -f "${GHIDRA_INSTALL_DIR}/support/gradle/gradle-wrapper.jar" ]; then
               cp "${GHIDRA_INSTALL_DIR}/support/gradle/gradle-wrapper.jar" \
@@ -186,29 +189,72 @@ jobs:
         if: steps.check-version.outputs.skip == 'false' && github.event.inputs.force == 'true'
         run: |
           VERSION="${{ steps.ghidra-release.outputs.version }}"
-          gh release delete "v${VERSION}" --yes --cleanup-tag 2>/dev/null || true
+          FORGEJO_URL="${{ github.server_url }}"
+          REPO="${{ github.repository }}"
 
-      - name: Create GitHub release
+          # Check if release exists
+          RELEASE_JSON=$(curl -sf -H "Authorization: token ${{ secrets.FORGEJO_TOKEN }}" \
+            "${FORGEJO_URL}/api/v1/repos/${REPO}/releases/tags/v${VERSION}" || echo "")
+
+          if [ -n "$RELEASE_JSON" ]; then
+            RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+            echo "Deleting existing release v${VERSION} (ID: ${RELEASE_ID})..."
+            curl -sf -X DELETE \
+              -H "Authorization: token ${{ secrets.FORGEJO_TOKEN }}" \
+              "${FORGEJO_URL}/api/v1/repos/${REPO}/releases/${RELEASE_ID}"
+          fi
+
+          # Delete tag if it exists
+          git push origin --delete "v${VERSION}" 2>/dev/null || true
+
+      - name: Create Forgejo release
         if: steps.check-version.outputs.skip == 'false'
         id: create-release
         run: |
           VERSION="${{ steps.ghidra-release.outputs.version }}"
+          FORGEJO_URL="${{ github.server_url }}"
+          REPO="${{ github.repository }}"
           ZIP_FILE="${{ steps.validate-zip.outputs.zip_file }}"
           ZIP_FILENAME="${{ steps.validate-zip.outputs.zip_filename }}"
 
-          gh release create "v${VERSION}" "$ZIP_FILE" \
-            --title "McG for Ghidra ${VERSION}" \
-            --notes "McG extension built against Ghidra ${VERSION}.
+          # Create release
+          RELEASE_JSON=$(curl -sf -X POST \
+            "${FORGEJO_URL}/api/v1/repos/${REPO}/releases" \
+            -H "Authorization: token ${{ secrets.FORGEJO_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"v${VERSION}\",
+              \"name\": \"GhidraMCP for Ghidra ${VERSION}\",
+              \"body\": \"GhidraMCP extension built against Ghidra ${VERSION}.\\n\\n## Installation\\n\\nDownload the ZIP file and install it via Ghidra's File -> Install Extensions.\\n\\n## Compatibility\\n\\nThis extension is built for Ghidra ${VERSION}. It may work with other versions but is untested.\",
+              \"target_commitish\": \"main\",
+              \"draft\": false,
+              \"prerelease\": false
+            }")
 
-          ## Installation
+          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Failed to create release. Response: $RELEASE_JSON"
+            exit 1
+          fi
 
-          Download the ZIP file and install it via Ghidra's File -> Install Extensions.
+          echo "Created release v${VERSION} (ID: ${RELEASE_ID})"
 
-          ## Compatibility
+          # Upload ZIP as release asset
+          ASSET_RESPONSE=$(curl -sf -X POST \
+            "${FORGEJO_URL}/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${ZIP_FILENAME}" \
+            -H "Authorization: token ${{ secrets.FORGEJO_TOKEN }}" \
+            -H "Content-Type: application/zip" \
+            --data-binary "@${ZIP_FILE}")
 
-          This extension is built for Ghidra ${VERSION}. It may work with other versions but is untested."
+          if [ -z "$ASSET_RESPONSE" ]; then
+            echo "Failed to upload asset"
+            exit 1
+          fi
 
-          echo "Created release v${VERSION} with asset ${ZIP_FILENAME}"
+          echo "Uploaded asset: ${ZIP_FILENAME}"
+          echo "Release created: ${FORGEJO_URL}/${REPO}/releases/tag/v${VERSION}"
+
+          # Set output for conditional commit step
           echo "success=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit version updates to main
@@ -219,6 +265,7 @@ jobs:
           git config user.name "Ghidra Release Bot"
           git config user.email "ghidra-release-bot@noreply"
 
+          # Pull any changes from main
           if ! git pull --rebase origin main; then
             echo "Error: Failed to rebase on main. Manual intervention required."
             exit 1
