@@ -87,6 +87,73 @@ public class McpServerApplication {
     }
 
     /**
+     * Starts the server in headless mode with a Program directly (no GUI plugin).
+     * Used by McgServer GhidraScript via analyzeHeadless.
+     */
+    public static void startServerHeadless(Program program) {
+        // Create a lightweight plugin-like wrapper for headless program access
+        headlessProgram = program;
+
+        if (context != null && context.isRunning()) {
+            return;
+        }
+
+        try {
+            cleanStalePortFiles();
+
+            String host = PortResolver.resolveHost();
+            PortResolver.PortConfig portConfig = PortResolver.resolvePort();
+            int port = PortResolver.findAvailablePort(portConfig.port(), portConfig.isExplicit());
+            activeHost = host;
+            activePort = port;
+
+            if (!"127.0.0.1".equals(host) && !"localhost".equals(host)) {
+                Msg.warn(McpServerApplication.class,
+                        "Warning: MCP server is accessible from the network (" + host + "). " +
+                        "No authentication is configured.");
+            }
+
+            context = SpringApplication.run(McpServerApplication.class,
+                    "--server.address=" + host,
+                    "--server.port=" + port,
+                    "--spring.ai.mcp.server.port=" + port);
+
+            writeConfigFiles(host, port);
+
+            String displayHost = "127.0.0.1".equals(host) ? "localhost" : host;
+            Msg.info(McpServerApplication.class,
+                    "McG server started at http://" + displayHost + ":" + port + "/sse");
+        } catch (RuntimeException e) {
+            if (e instanceof PortInUseException || e.getCause() instanceof BindException) {
+                Msg.error(McpServerApplication.class,
+                        "Port " + activePort + " was available during pre-check but is now in use. " +
+                                "Set GHIDRA_MCP_PORT to specify a different port.");
+            } else {
+                Msg.error(McpServerApplication.class,
+                        "Failed to start McG server: " + e.getMessage(), e);
+            }
+            activePort = 0;
+            context = null;
+        }
+    }
+
+    // Headless program reference (used when no GUI plugin is available)
+    private static volatile Program headlessProgram;
+
+    /**
+     * Returns the active program, checking headless mode first, then plugins.
+     */
+    static Program getActiveProgram() {
+        // Check headless program first
+        if (headlessProgram != null) {
+            return headlessProgram;
+        }
+        // Fall back to GUI plugin
+        GhidraMCPPlugin plugin = getActivePlugin();
+        return plugin != null ? plugin.getCurrentProgram() : null;
+    }
+
+    /**
      * Returns the active port number, or 0 if the server is not running.
      */
     public static int getPort() {

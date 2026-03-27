@@ -47,18 +47,10 @@ import java.util.Iterator;
 @Service
 public class GhidraService {
 
-    private GhidraMCPPlugin getPlugin() {
-        GhidraMCPPlugin plugin = McpServerApplication.getActivePlugin();
-        if (plugin == null) {
-            throw new IllegalStateException("No Ghidra plugin instance available");
-        }
-        return plugin;
-    }
-
     private Program getProgram() {
-        Program program = getPlugin().getCurrentProgram();
+        Program program = McpServerApplication.getActiveProgram();
         if (program == null) {
-            throw new IllegalStateException("No program is open in the active CodeBrowser");
+            throw new IllegalStateException("No program is open. Open a binary in Ghidra or import one in headless mode.");
         }
         return program;
     }
@@ -81,34 +73,49 @@ public class GhidraService {
     }
 
     /**
-     * Runs a program modification on the Swing EDT inside a transaction.
-     * Propagates any error to the caller instead of swallowing it.
+     * Runs a program modification inside a transaction.
+     * In GUI mode, dispatches to the Swing EDT for UI synchronization.
+     * In headless mode, runs directly on the calling thread.
      */
     private void runTransaction(String description, Runnable action) {
-        AtomicReference<Exception> error = new AtomicReference<>();
-        try {
-            SwingUtilities.invokeAndWait(() -> {
-                Program program = getProgram();
-                int tx = program.startTransaction(description);
-                boolean success = false;
-                try {
-                    action.run();
-                    success = true;
-                } catch (Exception e) {
-                    error.set(e);
-                } finally {
-                    program.endTransaction(tx, success);
-                }
-            });
-        } catch (InterruptedException | InvocationTargetException e) {
-            throw new RuntimeException("Failed to execute on Swing thread: " + e.getMessage(), e);
-        }
-        if (error.get() != null) {
-            Exception e = error.get();
-            if (e instanceof RuntimeException) {
-                throw (RuntimeException) e;
+        if (java.awt.GraphicsEnvironment.isHeadless()) {
+            // Headless: run directly on calling thread
+            Program program = getProgram();
+            int tx = program.startTransaction(description);
+            boolean success = false;
+            try {
+                action.run();
+                success = true;
+            } finally {
+                program.endTransaction(tx, success);
             }
-            throw new RuntimeException(e.getMessage(), e);
+        } else {
+            // GUI: dispatch to Swing EDT
+            AtomicReference<Exception> error = new AtomicReference<>();
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    Program program = getProgram();
+                    int tx = program.startTransaction(description);
+                    boolean success = false;
+                    try {
+                        action.run();
+                        success = true;
+                    } catch (Exception e) {
+                        error.set(e);
+                    } finally {
+                        program.endTransaction(tx, success);
+                    }
+                });
+            } catch (InterruptedException | InvocationTargetException e) {
+                throw new RuntimeException("Failed to execute on Swing thread: " + e.getMessage(), e);
+            }
+            if (error.get() != null) {
+                Exception e = error.get();
+                if (e instanceof RuntimeException) {
+                    throw (RuntimeException) e;
+                }
+                throw new RuntimeException(e.getMessage(), e);
+            }
         }
     }
 
@@ -420,7 +427,7 @@ public class GhidraService {
     public String addEnumValue(String enumName, String valueName, long value) {
         runTransaction("Add enum value", () -> {
             try {
-                Enum enumType = findEnum(enumName);
+                ghidra.program.model.data.Enum enumType = findEnum(enumName);
                 enumType.add(valueName, value);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to add enum value: " + e.getMessage(), e);
@@ -431,7 +438,7 @@ public class GhidraService {
 
     @Tool(description = "Get details about an enum including all values")
     public List<String> getEnum(String enumName) {
-        Enum enumType = findEnum(enumName);
+        ghidra.program.model.data.Enum enumType = findEnum(enumName);
         var result = new ArrayList<String>();
 
         result.add("Name: " + enumType.getName());
@@ -495,14 +502,14 @@ public class GhidraService {
         throw new IllegalArgumentException("Struct not found: " + structName + ". Use listStructs() to see available structures.");
     }
 
-    private Enum findEnum(String enumName) {
+    private ghidra.program.model.data.Enum findEnum(String enumName) {
         DataTypeManager dtm = getProgram().getDataTypeManager();
         Iterator<DataType> allTypes = dtm.getAllDataTypes();
 
         while (allTypes.hasNext()) {
             DataType dt = allTypes.next();
-            if (dt instanceof Enum && dt.getName().equals(enumName)) {
-                return (Enum) dt;
+            if (dt instanceof ghidra.program.model.data.Enum && dt.getName().equals(enumName)) {
+                return (ghidra.program.model.data.Enum) dt;
             }
         }
 
